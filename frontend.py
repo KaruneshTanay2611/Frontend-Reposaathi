@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import requests
 import streamlit as st
 
+import database as db
+
 # ==============================================================================
 # 1. APPLICATION CONFIGURATION & CONSTANTS
 # ==============================================================================
@@ -390,6 +392,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # ==============================================================================
 
 SESSION_DEFAULTS = {
+    "authenticated_user": None,
     "page": "Home",
     "repo_input": "",
     "repo_data": None,
@@ -734,7 +737,99 @@ def ask_ai_assistant(question: str, repo_data: dict = None, repo_files: list = N
 
 
 # ==============================================================================
-# 6. SIDEBAR NAVIGATION & DEVELOPER PROFILE
+# 6. AUTHENTICATION PORTAL & SESSION GUARD
+# ==============================================================================
+
+def render_auth_portal():
+    """Render the secure contributor Login and Registration interface."""
+    st.write("")
+    _, col_center, _ = st.columns([1, 2.2, 1])
+
+    with col_center:
+        st.markdown(
+            """
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 42px; margin-bottom: 6px;">🤝</div>
+                <div style="font-size: 28px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.5px;">RepoSathi</div>
+                <div style="font-size: 11px; color: #818CF8; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;">
+                    Contributor Access Portal
+                </div>
+                <p style="color: #94A3B8; font-size: 14px; margin-top: 8px; line-height: 1.6;">
+                    Sign in or create a developer account to explore codebases, track starter issues, and get AI-powered open source mentorship.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        tab_login, tab_signup = st.tabs(["🔑 Sign In", "📝 Create Account"])
+
+        with tab_login:
+            st.markdown("<div style='margin-top: 10px;'>", unsafe_allow_html=True)
+            with st.form("auth_login_form"):
+                login_email = st.text_input("Email Address", placeholder="contributor@example.com", key="auth_login_email")
+                login_password = st.text_input("Password", type="password", key="auth_login_password")
+                submit_login = st.form_submit_button("Sign In to RepoSathi", type="primary", use_container_width=True)
+
+            if submit_login:
+                ok, user_data, msg = db.authenticate_user(login_email, login_password)
+                if ok and user_data:
+                    st.session_state.authenticated_user = user_data
+                    # Load user-scoped saved repositories from SQLite
+                    st.session_state.saved = db.get_user_saved_repos(user_data["id"])
+                    st.success(f"Welcome back, {user_data['full_name']}!")
+                    st.rerun()
+                else:
+                    st.error(msg)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        with tab_signup:
+            st.markdown("<div style='margin-top: 10px;'>", unsafe_allow_html=True)
+            with st.form("auth_signup_form"):
+                reg_name = st.text_input("Full Name", placeholder="e.g. Alex Morgan", key="auth_reg_name")
+                reg_email = st.text_input("Email Address", placeholder="contributor@example.com", key="auth_reg_email")
+                reg_password = st.text_input(
+                    "Password",
+                    type="password",
+                    help="Must be at least 8 characters with letters and numbers or symbols.",
+                    key="auth_reg_password",
+                )
+                reg_confirm = st.text_input("Confirm Password", type="password", key="auth_reg_confirm")
+                submit_signup = st.form_submit_button("Create Contributor Account", type="primary", use_container_width=True)
+
+            if submit_signup:
+                ok, msg = db.register_user(reg_name, reg_email, reg_password, reg_confirm)
+                if ok:
+                    st.success(f"✅ {msg}")
+                    st.info("Switch to the 'Sign In' tab above to log into your account.")
+                else:
+                    st.error(msg)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+# --- Enforce Authentication Guard ---
+if st.session_state.get("authenticated_user") is None:
+    with st.sidebar:
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <div style="font-size: 28px;">🤝</div>
+                <div>
+                    <div style="font-size: 20px; font-weight: 800; color: #FFFFFF; letter-spacing: -0.5px;">RepoSathi</div>
+                    <div style="font-size: 11px; color: #818CF8; font-weight: 600; letter-spacing: 1px;">OPEN SOURCE COMPANION</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        st.info("🔒 Please sign in or register to access repository analysis, issue tracking, and Gemma AI features.")
+    render_auth_portal()
+    st.stop()
+
+
+# ==============================================================================
+# 7. SIDEBAR NAVIGATION & DEVELOPER PROFILE (AUTHENTICATED)
 # ==============================================================================
 
 with st.sidebar:
@@ -751,6 +846,30 @@ with st.sidebar:
         """,
         unsafe_allow_html=True,
     )
+
+    # Contributor User Badge & Logout
+    cur_user = st.session_state.get("authenticated_user")
+    if cur_user:
+        st.markdown(
+            f"""
+            <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; margin-top: 4px;">
+                <div style="font-size: 10px; font-weight: 700; color: #818CF8; letter-spacing: 1px;">ACTIVE CONTRIBUTOR</div>
+                <div style="font-weight: 700; color: #FFFFFF; font-size: 14px; margin-top: 1px;">{cur_user['full_name']}</div>
+                <div style="font-size: 11px; color: #94A3B8;">{cur_user['email']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("🚪 Log Out", key="logout_btn", use_container_width=True):
+            st.session_state.authenticated_user = None
+            st.session_state.repo_data = None
+            st.session_state.repo_issues = []
+            st.session_state.ai_messages = []
+            st.session_state.saved = []
+            st.rerun()
+
+    st.write("")
 
     # Backend / AI Status Badge
     ollama_ok, models = check_ollama_status()
@@ -799,7 +918,7 @@ with st.sidebar:
     st.divider()
 
     # Contributor Profile Quickview
-    st.markdown("<div style='font-size: 11px; font-weight: 700; color: #94A3B8; letter-spacing: 1px;'>CONTRIBUTOR PROFILE</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size: 11px; font-weight: 700; color: #94A3B8; letter-spacing: 1px;'>DEVELOPER PROFILE</div>", unsafe_allow_html=True)
     st.markdown(f"**Level:** `{st.session_state.experience}` Contributor")
     st.markdown(f"**Skills:** {', '.join(st.session_state.skills[:3])}{'...' if len(st.session_state.skills) > 3 else ''}")
     st.markdown(f"**Availability:** `{st.session_state.availability}`")
@@ -1041,11 +1160,16 @@ elif st.session_state.page == "Explore & Analyze":
                 is_saved = full_name in st.session_state.saved
                 save_text = "★ Saved" if is_saved else "☆ Save Repo"
                 if st.button(save_text, key="save_current_repo_btn", use_container_width=True):
+                    user = st.session_state.get("authenticated_user")
                     if is_saved:
                         st.session_state.saved.remove(full_name)
+                        if user:
+                            db.remove_user_saved_repo(user["id"], full_name)
                         st.toast("Removed from saved repositories.")
                     else:
                         st.session_state.saved.append(full_name)
+                        if user:
+                            db.add_user_saved_repo(user["id"], full_name)
                         st.toast("Saved to your bookmarks!")
                     st.rerun()
 
@@ -1465,10 +1589,15 @@ elif st.session_state.page == "Skill Matcher":
                     is_saved = r_name in st.session_state.saved
                     btn_save_text = "★ Saved" if is_saved else "☆ Bookmark"
                     if st.button(btn_save_text, key=f"match_save_{r_name}", use_container_width=True):
+                        user = st.session_state.get("authenticated_user")
                         if is_saved:
                             st.session_state.saved.remove(r_name)
+                            if user:
+                                db.remove_user_saved_repo(user["id"], r_name)
                         else:
                             st.session_state.saved.append(r_name)
+                            if user:
+                                db.add_user_saved_repo(user["id"], r_name)
                         st.rerun()
 
 
@@ -1500,7 +1629,10 @@ elif st.session_state.page == "Saved Repositories":
                         st.rerun()
 
                     if st.button("🗑️ Remove", key=f"saved_remove_{repo_name}", use_container_width=True):
+                        user = st.session_state.get("authenticated_user")
                         st.session_state.saved.remove(repo_name)
+                        if user:
+                            db.remove_user_saved_repo(user["id"], repo_name)
                         st.rerun()
 
 
